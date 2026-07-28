@@ -1,0 +1,13 @@
+**/.DS_Store
+/node_modules
+/vendor
+.env
+
+/wordpress
+/uploads
+/logs/*
+!logs/.gitkeep
+ssl/*
+
+/backups/*
+!backups/.gitkeep

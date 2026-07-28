@@ -1,0 +1,25 @@
+{
+  "name": "wordpress-mainwp",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/ryanfreckle/wordpress-mainwp#readme",
+  "bugs": {
+    "url": "https://github.com/ryanfreckle/wordpress-mainwp/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryanfreckle/wordpress-mainwp.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "scripts": {
+    "start": "docker compose up -d",
+    "stop": "docker compose down",
+    "restart": "docker compose restart",
+    "clean": "docker compose down -v --remove-orphans",
+    "logs": "docker compose logs",
+    "db:backup": "node bin/db/backup.js",
+    "db:restore": "node bin/db/restore.js",
+    "db:import": "node bin/db/import.js"
+  }
+}
