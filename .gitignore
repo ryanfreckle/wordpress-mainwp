@@ -11,3 +11,5 @@ ssl/*
 
 /backups/*
 !backups/.gitkeep
+
+/dist
