@@ -1,0 +1,78 @@
+name: Deploy plugin to WP server
+
+# Builds plugins/mainwp-development-extension (via bin/plugin/dist.js) and
+# SFTP-syncs the result straight into wp-content/plugins on the MainWP
+# management server. Full-sync every run — no changed-file diffing/marker
+# file, since a single plugin folder is small enough that re-uploading it
+# whole each time is simpler and more robust than tracking state.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  PLUGIN_NAME: mainwp-development-extension
+  # Path on the server to the *parent* plugins directory (the plugin's own
+  # folder name is appended automatically). Edit this to match your server.
+  REMOTE_PLUGINS_PATH: public_html/wordpress.developandtest.uk/wp-content/plugins
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Build plugin
+        run: node bin/plugin/dist.js "$PLUGIN_NAME"
+
+      - name: Deploy via SFTP
+        env:
+          SFTP_HOST: ${{ secrets.WP_SFTP_HOST }}
+          SFTP_USERNAME: ${{ secrets.WP_SFTP_USERNAME }}
+          SFTP_PASSWORD: ${{ secrets.WP_SFTP_PASSWORD }}
+        run: |
+          set -e
+
+          if [ -z "$SFTP_HOST" ] || [ -z "$SFTP_USERNAME" ] || [ -z "$SFTP_PASSWORD" ]; then
+            echo "❌ Missing one or more secrets: WP_SFTP_HOST, WP_SFTP_USERNAME, WP_SFTP_PASSWORD"
+            exit 1
+          fi
+
+          sudo apt-get install -y -qq lftp
+
+          LOCAL_DIR="dist/${PLUGIN_NAME}"
+          REMOTE_DIR="${REMOTE_PLUGINS_PATH}/${PLUGIN_NAME}"
+
+          if [ ! -d "$LOCAL_DIR" ]; then
+            echo "❌ Build output not found: $LOCAL_DIR"
+            exit 1
+          fi
+
+          safe_user="${SFTP_USERNAME//\\/\\\\}"; safe_user="${safe_user//\"/\\\"}"
+          safe_pass="${SFTP_PASSWORD//\\/\\\\}"; safe_pass="${safe_pass//\"/\\\"}"
+
+          SCRIPT=$(mktemp)
+          {
+            echo "set sftp:auto-confirm yes"
+            echo "set net:timeout 15"
+            echo "set net:max-retries 3"
+            echo "set net:reconnect-interval-base 3"
+            echo "open sftp://${SFTP_HOST}"
+            echo "user \"$safe_user\" \"$safe_pass\""
+            echo "mkdir -f -p ${REMOTE_DIR}"
+            echo "mirror -R --delete --verbose --parallel=3 ${LOCAL_DIR} ${REMOTE_DIR}"
+          } > "$SCRIPT"
+
+          echo "🚀 Syncing ${LOCAL_DIR} -> ${SFTP_HOST}:${REMOTE_DIR}"
+          lftp -f "$SCRIPT"
+          rm -f "$SCRIPT"
+
+          echo "✅ Deploy complete"
