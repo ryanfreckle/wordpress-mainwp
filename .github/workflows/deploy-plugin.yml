@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        plugin: [mainwp-development-extension]
+        plugin: [mainwp-development-extension, freckle-lockdown]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
