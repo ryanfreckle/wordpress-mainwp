@@ -1,10 +1,13 @@
 name: Deploy plugin to WP server
 
-# Builds plugins/mainwp-development-extension (via bin/plugin/dist.js) and
+# Builds each plugin listed in the matrix below (via bin/plugin/dist.js) and
 # SFTP-syncs the result straight into wp-content/plugins on the MainWP
 # management server. Full-sync every run — no changed-file diffing/marker
-# file, since a single plugin folder is small enough that re-uploading it
-# whole each time is simpler and more robust than tracking state.
+# file, since each plugin folder is small enough that re-uploading it whole
+# each time is simpler and more robust than tracking state.
+#
+# To deploy an additional plugin: add its plugins/<folder> name to the
+# matrix list below. Each one gets its own build + deploy job, in parallel.
 
 on:
   push:
@@ -12,15 +15,20 @@ on:
   workflow_dispatch: {}
 
 env:
-  PLUGIN_NAME: mainwp-development-extension
-  # Path on the server to the *parent* plugins directory (the plugin's own
+  # Path on the server to the *parent* plugins directory (each plugin's own
   # folder name is appended automatically). Edit this to match your server.
   REMOTE_PLUGINS_PATH: public_html/wordpress.developandtest.uk/wp-content/plugins
 
 jobs:
   deploy:
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: [mainwp-development-extension]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PLUGIN_NAME: ${{ matrix.plugin }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
