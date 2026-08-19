@@ -1,10 +1,13 @@
 name: Deploy plugin to WP server
 
 # Builds each plugin listed in the matrix below (via bin/plugin/dist.js) and
-# SFTP-syncs the result straight into wp-content/plugins on the MainWP
-# management server. Full-sync every run — no changed-file diffing/marker
-# file, since each plugin folder is small enough that re-uploading it whole
-# each time is simpler and more robust than tracking state.
+# FTP-syncs the result straight into wp-content/plugins on the MainWP
+# management server. Plain FTP, not SFTP — this shared host doesn't run an
+# SSH/SFTP daemon (confirmed by an SFTP attempt getting rejected with
+# publickey/gssapi-only auth methods, i.e. nothing was listening as SSH).
+# Full-sync every run — no changed-file diffing/marker file, since each
+# plugin folder is small enough that re-uploading it whole each time is
+# simpler and more robust than tracking state.
 #
 # To deploy an additional plugin: add its plugins/<folder> name to the
 # matrix list below. Each one gets its own build + deploy job, in parallel.
@@ -41,15 +44,17 @@ jobs:
       - name: Build plugin
         run: node bin/plugin/dist.js "$PLUGIN_NAME"
 
-      - name: Deploy via SFTP
+      - name: Deploy via FTP
         env:
-          SFTP_HOST: ${{ secrets.WP_SFTP_HOST }}
-          SFTP_USERNAME: ${{ secrets.WP_SFTP_USERNAME }}
-          SFTP_PASSWORD: ${{ secrets.WP_SFTP_PASSWORD }}
+          # Secret names kept as-is (WP_SFTP_*) from the original SFTP setup
+          # — same host/credentials, just spoken over FTP instead now.
+          FTP_HOST: ${{ secrets.WP_SFTP_HOST }}
+          FTP_USERNAME: ${{ secrets.WP_SFTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.WP_SFTP_PASSWORD }}
         run: |
           set -e
 
-          if [ -z "$SFTP_HOST" ] || [ -z "$SFTP_USERNAME" ] || [ -z "$SFTP_PASSWORD" ]; then
+          if [ -z "$FTP_HOST" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
             echo "❌ Missing one or more secrets: WP_SFTP_HOST, WP_SFTP_USERNAME, WP_SFTP_PASSWORD"
             exit 1
           fi
@@ -64,25 +69,23 @@ jobs:
             exit 1
           fi
 
-          safe_user="${SFTP_USERNAME//\\/\\\\}"; safe_user="${safe_user//\"/\\\"}"
-          safe_pass="${SFTP_PASSWORD//\\/\\\\}"; safe_pass="${safe_pass//\"/\\\"}"
+          safe_user="${FTP_USERNAME//\\/\\\\}"; safe_user="${safe_user//\"/\\\"}"
+          safe_pass="${FTP_PASSWORD//\\/\\\\}"; safe_pass="${safe_pass//\"/\\\"}"
 
           SCRIPT=$(mktemp)
           {
-            # TEMP: verbose lftp protocol trace to diagnose the connection
-            # failure. Remove this line once the deploy is confirmed working.
-            echo "debug 3"
-            echo "set sftp:auto-confirm yes"
+            echo "set ssl:verify-certificate no"
+            echo "set ftp:passive-mode on"
             echo "set net:timeout 15"
             echo "set net:max-retries 3"
             echo "set net:reconnect-interval-base 3"
-            echo "open sftp://${SFTP_HOST}"
+            echo "open ${FTP_HOST}"
             echo "user \"$safe_user\" \"$safe_pass\""
             echo "mkdir -f -p ${REMOTE_DIR}"
             echo "mirror -R --delete --verbose --parallel=3 ${LOCAL_DIR} ${REMOTE_DIR}"
           } > "$SCRIPT"
 
-          echo "🚀 Syncing ${LOCAL_DIR} -> ${SFTP_HOST}:${REMOTE_DIR}"
+          echo "🚀 Syncing ${LOCAL_DIR} -> ${FTP_HOST}:${REMOTE_DIR}"
           lftp -f "$SCRIPT"
           rm -f "$SCRIPT"
 
