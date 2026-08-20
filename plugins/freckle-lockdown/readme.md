@@ -9,8 +9,9 @@ features, each toggled from **Settings > Freckle Lockdown**:
    `template_redirect`, which never fires for those).
 2. **Login URL rename** — moves the login form off `wp-login.php` onto a
    custom slug (default `freckleadmin`). Direct hits on `wp-login.php` and
-   logged-out hits on `wp-admin` are redirected/blocked. wp-admin itself is
-   not moved — once authenticated, `wp-admin/*` works as normal.
+   logged-out hits on `wp-admin` both get a plain 404 — no redirect, so
+   probing either one can't be used to discover the custom slug. wp-admin
+   itself is not moved — once authenticated, `wp-admin/*` works as normal.
 
 ## Safety valve
 

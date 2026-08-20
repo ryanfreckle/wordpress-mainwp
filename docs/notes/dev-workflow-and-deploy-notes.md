@@ -24,6 +24,20 @@ but its reusable workflow hardcodes a `themes/` path — it's built for theme
 deploys, not plugins — so this project got its own small standalone workflow
 instead rather than editing that repo.
 
+## Theme deploy workflow status
+
+`.github/workflows/deploy-theme.yml` — same pattern as `deploy-plugin.yml`
+(build via `bin/theme/dist.js`, FTP-sync on push to `main`), pointed at
+`wp-content/themes` instead of `wp-content/plugins`. Reuses the same
+`WP_SFTP_*` repo secrets, so no new secrets needed.
+
+- [x] Workflow file written (on `develop`)
+- [x] `themes/freckle-theme` barebones theme added (classic PHP templates,
+      no block/FSE support)
+- [ ] Merge `develop` → `main` to trigger the first real deploy
+- [ ] Confirm the theme actually lands in `wp-content/themes` and activates
+      cleanly on the real server
+
 ### Follow-up ideas (not started)
 - Optional: front-end lockdown feature in the extension (hide/redirect the
   public front end via `template_redirect`) — discussed, deliberately left

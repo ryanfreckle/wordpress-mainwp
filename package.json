@@ -21,6 +21,7 @@
     "db:backup": "node bin/db/backup.js",
     "db:restore": "node bin/db/restore.js",
     "db:import": "node bin/db/import.js",
-    "plugin:dist": "node bin/plugin/dist.js"
+    "plugin:dist": "node bin/plugin/dist.js",
+    "theme:dist": "node bin/theme/dist.js"
   }
 }

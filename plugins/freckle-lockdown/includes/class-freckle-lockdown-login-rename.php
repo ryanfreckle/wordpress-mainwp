@@ -1,10 +1,12 @@
 <?php
 /**
  * Renames the login URL to a custom slug (e.g. /freckleadmin/) and blocks
- * direct access to wp-login.php and to wp-admin for logged-out visitors.
+ * direct access to wp-login.php and to wp-admin for logged-out visitors —
+ * both 404, with no redirect, so a logged-out hit on wp-admin can't be used
+ * to fingerprint the custom slug.
  *
  * Same technique plugins like WPS Hide Login use: intercept on
- * 'plugins_loaded' (early — before wp-login.php's own logic or wp-admin's
+ * 'wp_loaded' (early — before wp-login.php's own logic or wp-admin's
  * auth_redirect() run), then rewrite the URLs WordPress generates so links,
  * redirects and logout all point at the new slug instead of wp-login.php.
  *
@@ -51,7 +53,7 @@ class Login_Rename {
 	 * Runs early on every request. Decides whether to:
 	 * - serve wp-login.php (request is for our custom slug)
 	 * - block a direct hit on the real wp-login.php
-	 * - redirect a logged-out wp-admin request to the new slug
+	 * - block a logged-out wp-admin request
 	 */
 	public function intercept_request() {
 		if ( defined( 'FRECKLE_LOCKDOWN_SERVING_LOGIN' ) || ( defined( 'WP_CLI' ) && WP_CLI ) ) {
@@ -74,11 +76,11 @@ class Login_Rename {
 			$this->send_404();
 		}
 
-		// Logged-out visitor hitting wp-admin: bounce to the new login
-		// slug instead of letting core redirect to (blocked) wp-login.php.
+		// Logged-out visitor hitting wp-admin: 404, same as wp-login.php.
+		// Deliberately not a redirect to the custom slug — redirecting would
+		// let anyone probing /wp-admin discover where the real login lives.
 		if ( is_admin() && ! is_user_logged_in() && ! wp_doing_ajax() && 'admin-ajax.php' !== $pagenow ) {
-			wp_safe_redirect( home_url( '/' . trim( $this->slug, '/' ) . '/' ) );
-			exit;
+			$this->send_404();
 		}
 	}
 

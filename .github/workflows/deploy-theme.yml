@@ -1,0 +1,87 @@
+name: Deploy theme to WP server
+
+# Builds each theme listed in the matrix below (via bin/theme/dist.js) and
+# FTP-syncs the result straight into wp-content/themes on the MainWP
+# management server. Mirrors deploy-plugin.yml — see that file for the
+# reasoning on plain FTP vs SFTP and full-sync-every-run.
+#
+# To deploy an additional theme: add its themes/<folder> name to the
+# matrix list below. Each one gets its own build + deploy job, in parallel.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  # Path on the server to the *parent* themes directory (each theme's own
+  # folder name is appended automatically). Edit this to match your server.
+  REMOTE_THEMES_PATH: public_html/wordpress.developandtest.uk/wp-content/themes
+
+jobs:
+  deploy:
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [freckle-theme]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      THEME_NAME: ${{ matrix.theme }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Build theme
+        run: node bin/theme/dist.js "$THEME_NAME"
+
+      - name: Deploy via FTP
+        env:
+          # Same host/credentials as deploy-plugin.yml.
+          FTP_HOST: ${{ secrets.WP_SFTP_HOST }}
+          FTP_USERNAME: ${{ secrets.WP_SFTP_USERNAME }}
+          FTP_PASSWORD: ${{ secrets.WP_SFTP_PASSWORD }}
+        run: |
+          set -e
+
+          if [ -z "$FTP_HOST" ] || [ -z "$FTP_USERNAME" ] || [ -z "$FTP_PASSWORD" ]; then
+            echo "❌ Missing one or more secrets: WP_SFTP_HOST, WP_SFTP_USERNAME, WP_SFTP_PASSWORD"
+            exit 1
+          fi
+
+          sudo apt-get install -y -qq lftp
+
+          LOCAL_DIR="dist/${THEME_NAME}"
+          REMOTE_DIR="${REMOTE_THEMES_PATH}/${THEME_NAME}"
+
+          if [ ! -d "$LOCAL_DIR" ]; then
+            echo "❌ Build output not found: $LOCAL_DIR"
+            exit 1
+          fi
+
+          safe_user="${FTP_USERNAME//\\/\\\\}"; safe_user="${safe_user//\"/\\\"}"
+          safe_pass="${FTP_PASSWORD//\\/\\\\}"; safe_pass="${safe_pass//\"/\\\"}"
+
+          SCRIPT=$(mktemp)
+          {
+            echo "set ssl:verify-certificate no"
+            echo "set ftp:passive-mode on"
+            echo "set net:timeout 15"
+            echo "set net:max-retries 3"
+            echo "set net:reconnect-interval-base 3"
+            echo "open ${FTP_HOST}"
+            echo "user \"$safe_user\" \"$safe_pass\""
+            echo "mkdir -f -p ${REMOTE_DIR}"
+            echo "mirror -R --delete --verbose --parallel=3 ${LOCAL_DIR} ${REMOTE_DIR}"
+          } > "$SCRIPT"
+
+          echo "🚀 Syncing ${LOCAL_DIR} -> ${FTP_HOST}:${REMOTE_DIR}"
+          lftp -f "$SCRIPT"
+          rm -f "$SCRIPT"
+
+          echo "✅ Deploy complete"
