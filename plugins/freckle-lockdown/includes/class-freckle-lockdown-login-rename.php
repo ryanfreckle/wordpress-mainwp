@@ -33,7 +33,14 @@ class Login_Rename {
 			return;
 		}
 
-		add_action( 'plugins_loaded', array( $this, 'intercept_request' ), 0 );
+		// Hooked on wp_loaded (not plugins_loaded): by this point WP has
+		// finished its own bootstrap — including wp_functionality_constants()
+		// (AUTOSAVE_INTERVAL, WP_POST_REVISIONS, etc.) — which wp-login.php's
+		// login_header()/wp_print_head_scripts() needs. Requiring wp-login.php
+		// any earlier than that fatals with "Undefined constant AUTOSAVE_INTERVAL".
+		// wp_loaded still fires well before wp-admin's own auth_redirect(), so
+		// the intercept still wins the race there.
+		add_action( 'wp_loaded', array( $this, 'intercept_request' ), 0 );
 
 		add_filter( 'site_url', array( $this, 'filter_login_url' ), 10, 4 );
 		add_filter( 'network_site_url', array( $this, 'filter_login_url' ), 10, 3 );
