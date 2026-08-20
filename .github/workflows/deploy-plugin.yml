@@ -17,6 +17,17 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# This shared host caps concurrent FTP connections per account low enough
+# that two "mirror --parallel=3" sessions running at once (e.g. this
+# workflow's two matrix jobs, or this workflow overlapping with
+# deploy-theme.yml on the same push) reliably makes one of them hit
+# "max-retries exceeded". Group name is shared with deploy-theme.yml on
+# purpose so only one FTP deploy job runs against the host at a time,
+# repo-wide; queued runs wait rather than get cancelled.
+concurrency:
+  group: wp-ftp-deploy
+  cancel-in-progress: false
+
 env:
   # Path on the server to the *parent* plugins directory (each plugin's own
   # folder name is appended automatically). Edit this to match your server.
@@ -26,6 +37,7 @@ jobs:
   deploy:
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         plugin: [mainwp-development-extension, freckle-lockdown]
     runs-on: ubuntu-latest

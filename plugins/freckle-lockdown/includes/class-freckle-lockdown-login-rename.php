@@ -88,6 +88,14 @@ class Login_Rename {
 	 * Rewrites any generated wp-login.php URL onto the custom slug, e.g.
 	 * wp_login_url(), wp_logout_url(), wp_registration_url().
 	 *
+	 * Must keep rewriting even while FRECKLE_LOCKDOWN_SERVING_LOGIN is
+	 * defined (i.e. while we're mid-request rendering the login form at the
+	 * custom slug) — that's exactly when wp-login.php builds its own
+	 * <form action="..."> via site_url('wp-login.php', 'login_post'). Skip
+	 * the rewrite there and the form posts back to the literal wp-login.php
+	 * URL, which intercept_request() then 404s — i.e. login becomes
+	 * impossible to submit. (This was a real bug here — fixed.)
+	 *
 	 * @param string      $url    The complete site URL including scheme and path.
 	 * @param string      $path   Path relative to the site URL.
 	 * @param string|null $scheme Scheme to give the URL context.
@@ -95,10 +103,6 @@ class Login_Rename {
 	 * @return string
 	 */
 	public function filter_login_url( $url, $path, $scheme = null, $blog_id = null ) {
-		if ( defined( 'FRECKLE_LOCKDOWN_SERVING_LOGIN' ) ) {
-			return $url;
-		}
-
 		if ( is_string( $path ) && 0 === strpos( $path, 'wp-login.php' ) ) {
 			$url = str_replace( 'wp-login.php', trim( $this->slug, '/' ), $url );
 		}
@@ -114,10 +118,6 @@ class Login_Rename {
 	 * @return string
 	 */
 	public function filter_redirect( $location, $status ) {
-		if ( defined( 'FRECKLE_LOCKDOWN_SERVING_LOGIN' ) ) {
-			return $location;
-		}
-
 		if ( is_string( $location ) && false !== strpos( $location, 'wp-login.php' ) ) {
 			$location = str_replace( 'wp-login.php', trim( $this->slug, '/' ), $location );
 		}

@@ -13,11 +13,16 @@ via `bin/plugin/dist.js` and SFTP-syncs it to the WP server on push to `main`
 - [x] `REMOTE_PLUGINS_PATH` set to
       `public_html/wordpress.developandtest.uk/wp-content/plugins`
 - [x] Repo secrets set: `WP_SFTP_HOST`, `WP_SFTP_USERNAME`, `WP_SFTP_PASSWORD`
-- [x] `develop` pushed to origin
-- [ ] Merge `develop` → `main` to trigger the first real deploy (not done yet —
-      pick up here)
-- [ ] Watch the Actions run after merging, confirm the plugin actually lands
-      on the server correctly
+- [x] `develop` merged to `main`, first real deploy triggered
+- [x] Matrix (`mainwp-development-extension` + `freckle-lockdown`) confirmed
+      running, but running both matrix jobs concurrently against the shared
+      host's FTP account intermittently hit `mirror: Fatal error: max-retries
+      exceeded` on whichever job lost the race for connections — fixed by
+      adding `concurrency: group: wp-ftp-deploy` (shared with
+      `deploy-theme.yml`) plus `strategy.max-parallel: 1`, so only one FTP
+      deploy job runs against the host at a time, repo-wide.
+- [ ] Watch the next Actions run, confirm both plugins land cleanly with the
+      serialized deploys
 
 Was originally going to reuse [unknownsock/gha-wp-deploy](https://github.com/unknownsock/gha-wp-deploy),
 but its reusable workflow hardcodes a `themes/` path — it's built for theme
@@ -31,12 +36,32 @@ instead rather than editing that repo.
 `wp-content/themes` instead of `wp-content/plugins`. Reuses the same
 `WP_SFTP_*` repo secrets, so no new secrets needed.
 
-- [x] Workflow file written (on `develop`)
+- [x] Workflow file written and merged to `main`
 - [x] `themes/freckle-theme` barebones theme added (classic PHP templates,
       no block/FSE support)
-- [ ] Merge `develop` → `main` to trigger the first real deploy
 - [ ] Confirm the theme actually lands in `wp-content/themes` and activates
-      cleanly on the real server
+      cleanly on the real server (blocked on the same FTP concurrency issue
+      as the plugin deploy — see above, now fixed, needs a run to confirm)
+
+## Login-rename bug found after first live deploy
+
+Two real bugs surfaced testing the renamed login on the actual server (both
+fixed in `class-freckle-lockdown-login-rename.php`, verified end-to-end
+against a local Docker WP before pushing):
+
+1. **Blank page on the custom slug** — the login page was being `require`d
+   from the `plugins_loaded` hook, before WP defines its own
+   "functionality constants" (`AUTOSAVE_INTERVAL` etc.) that
+   `wp-login.php`'s own header rendering needs → fatal error, blank page
+   with `display_errors` off in prod. Fix: moved the hook to `wp_loaded`
+   (still fires well before wp-admin's own `auth_redirect()`).
+2. **Login form couldn't actually be submitted** — `filter_login_url()` /
+   `filter_redirect()` deliberately left `wp-login.php` URLs unrewritten
+   while the plugin itself was mid-render of the login page, so the
+   rendered `<form action="...">` pointed at literal `wp-login.php` — which
+   the plugin's own `intercept_request()` then 404s. Nobody could log in via
+   the actual submit button. Fix: always rewrite, no exception for that
+   state.
 
 ### Follow-up ideas (not started)
 - Optional: front-end lockdown feature in the extension (hide/redirect the
