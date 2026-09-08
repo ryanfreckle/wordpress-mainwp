@@ -2,8 +2,8 @@
 /*
 Plugin Name: MainWP Migrate DB Backup - Child
 Plugin URI: https://mainwp.com
-Description: Child-site companion for the "MainWP Development Extension" dashboard extension. Lets the MainWP dashboard trigger a one-click WP Migrate DB Pro database backup (a plain export, no find & replace) on this site. Requires the MainWP Child plugin, WP Migrate DB Pro (or WP Migrate Lite), and WP-CLI on the server.
-Version: 1.0
+Description: Self-contained WP Migrate DB Pro database backup button. Adds its own "DB Backup" page to this site's wp-admin with a one-click backup + download — works standalone, no other plugin required. If the MainWP Child plugin and the "MainWP Development Extension" dashboard plugin also happen to be present, it can additionally be triggered remotely from the MainWP dashboard, but that's optional. Requires WP Migrate DB Pro (or WP Migrate Lite) and WP-CLI on the server.
+Version: 2.0
 Author: Freckle
 */
 
@@ -16,26 +16,169 @@ if ( ! defined( 'ABSPATH' ) ) {
 /**
  * Class MainWP_MigrateDB_Backup_Child
  *
- * Receives 'extra_execution' requests from the MainWP Development Extension dashboard
- * plugin (via the 'mainwp_child_extra_execution' filter that MainWP Child fires on every
- * request routed through its 'extra_execution' callable), runs a WP Migrate DB Pro backup,
- * and serves the resulting file back through a short-lived, single-use token URL.
+ * Standalone: registers its own wp-admin page, button, and AJAX handler, so this plugin
+ * runs a WP Migrate DB Pro backup on its own, on any site, with nothing else installed.
+ *
+ * Optionally also answers 'extra_execution' requests from the MainWP Development Extension
+ * dashboard plugin (via the 'mainwp_child_extra_execution' filter MainWP Child fires on every
+ * request routed through its 'extra_execution' callable) if that happens to be present — but
+ * nothing here requires it; that hook is simply never fired when MainWP Child isn't installed.
  */
 class MainWP_MigrateDB_Backup_Child {
 
 	const ACTION_NAME       = 'migratedb_backup';
+	const AJAX_ACTION       = 'mwp_migratedb_backup_run';
+	const NONCE_ACTION      = 'mwp_migratedb_backup_run';
 	const DOWNLOAD_QUERY_VAR = 'mwp_dev_dl';
 	const TOKEN_PREFIX      = 'mwp_dev_dl_';
 	const TOKEN_TTL         = 24 * HOUR_IN_SECONDS;
 	const BACKUP_SUBDIR     = 'mainwp-dev-backups';
 
 	public function __construct() {
-		add_filter( 'mainwp_child_extra_execution', array( $this, 'handle_extra_execution' ), 10, 2 );
+		// Standalone admin page + its own AJAX handler — this is the whole plugin on its own.
+		add_action( 'admin_menu', array( $this, 'register_admin_page' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
+		add_action( 'wp_ajax_' . self::AJAX_ACTION, array( $this, 'ajax_run_backup' ) );
 		add_action( 'init', array( $this, 'maybe_serve_download' ) );
+
+		// Optional bonus: only ever fires if the MainWP Child plugin is also installed.
+		add_filter( 'mainwp_child_extra_execution', array( $this, 'handle_extra_execution' ), 10, 2 );
+	}
+
+	/**
+	 * Register the standalone "DB Backup" wp-admin page.
+	 *
+	 * @return void
+	 */
+	public function register_admin_page() {
+		add_management_page(
+			__( 'DB Backup', 'mainwp-migratedb-backup-child' ),
+			__( 'DB Backup', 'mainwp-migratedb-backup-child' ),
+			'manage_options',
+			'mwp-migratedb-backup',
+			array( $this, 'render_admin_page' )
+		);
+	}
+
+	/**
+	 * Render the standalone admin page: a button, a status area, and a list of past backups.
+	 *
+	 * @return void
+	 */
+	public function render_admin_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			return;
+		}
+		?>
+		<div class="wrap">
+			<h1><?php esc_html_e( 'Database Backup (WP Migrate DB Pro)', 'mainwp-migratedb-backup-child' ); ?></h1>
+			<p><?php esc_html_e( 'Runs a plain database export (no find & replace, no migration) via WP Migrate DB Pro and WP-CLI.', 'mainwp-migratedb-backup-child' ); ?></p>
+			<p>
+				<button type="button" class="button button-primary mwp-migratedb-backup-btn">
+					<?php esc_html_e( 'Run Database Backup', 'mainwp-migratedb-backup-child' ); ?>
+				</button>
+			</p>
+			<div id="mwp-migratedb-backup-status"></div>
+
+			<h2><?php esc_html_e( 'Previous backups', 'mainwp-migratedb-backup-child' ); ?></h2>
+			<?php $this->render_backups_list(); ?>
+		</div>
+		<?php
+	}
+
+	/**
+	 * List existing backup files in the protected uploads subfolder, newest first.
+	 *
+	 * @return void
+	 */
+	protected function render_backups_list() {
+		$dir = $this->backup_dir();
+		if ( is_wp_error( $dir ) ) {
+			echo '<p>' . esc_html( $dir->get_error_message() ) . '</p>';
+			return;
+		}
+
+		$files = glob( trailingslashit( $dir ) . '*.sql.gz' );
+		if ( empty( $files ) ) {
+			echo '<p>' . esc_html__( 'No backups yet.', 'mainwp-migratedb-backup-child' ) . '</p>';
+			return;
+		}
+
+		usort( $files, static function ( $a, $b ) {
+			return filemtime( $b ) <=> filemtime( $a );
+		} );
+
+		echo '<table class="widefat striped"><thead><tr><th>' . esc_html__( 'File', 'mainwp-migratedb-backup-child' ) . '</th><th>' . esc_html__( 'Date', 'mainwp-migratedb-backup-child' ) . '</th><th>' . esc_html__( 'Size', 'mainwp-migratedb-backup-child' ) . '</th></tr></thead><tbody>';
+		foreach ( array_slice( $files, 0, 20 ) as $file ) {
+			echo '<tr><td>' . esc_html( basename( $file ) ) . '</td><td>' . esc_html( wp_date( 'Y-m-d H:i', filemtime( $file ) ) ) . '</td><td>' . esc_html( size_format( filesize( $file ) ) ) . '</td></tr>';
+		}
+		echo '</tbody></table>';
+	}
+
+	/**
+	 * Enqueue the small inline admin script that wires the button to our own AJAX action.
+	 *
+	 * @param string $hook_suffix Current admin page hook.
+	 *
+	 * @return void
+	 */
+	public function enqueue_admin_assets( $hook_suffix ) {
+		if ( 'tools_page_mwp-migratedb-backup' !== $hook_suffix ) {
+			return;
+		}
+
+		wp_enqueue_script( 'jquery' );
+
+		$script = "jQuery(function($){\n"
+			. "  $('.mwp-migratedb-backup-btn').on('click', function(e){\n"
+			. "    e.preventDefault();\n"
+			. "    var \$btn = $(this), \$status = $('#mwp-migratedb-backup-status'), label = \$btn.text();\n"
+			. "    \$btn.prop('disabled', true).text(" . wp_json_encode( __( 'Running…', 'mainwp-migratedb-backup-child' ) ) . ");\n"
+			. "    \$status.text(" . wp_json_encode( __( 'Running WP Migrate DB Pro export — this can take a while for larger databases…', 'mainwp-migratedb-backup-child' ) ) . ");\n"
+			. "    $.post(ajaxurl, { action: " . wp_json_encode( self::AJAX_ACTION ) . ", security: " . wp_json_encode( wp_create_nonce( self::NONCE_ACTION ) ) . " })\n"
+			. "      .done(function(response){\n"
+			. "        if (response && response.success) {\n"
+			. "          var data = response.data || {};\n"
+			. "          var html = 'Backup complete: ' + (data.filename || 'file') + (data.filesize ? ' (' + data.filesize + ')' : '');\n"
+			. "          if (data.download_url) { html += ' — <a href=\"' + data.download_url + '\" target=\"_blank\" rel=\"noopener\">Download</a>'; }\n"
+			. "          \$status.html(html);\n"
+			. "          location.reload();\n"
+			. "        } else {\n"
+			. "          \$status.text((response && response.data && response.data.message) ? response.data.message : 'Backup failed.');\n"
+			. "        }\n"
+			. "      })\n"
+			. "      .fail(function(){ \$status.text('Request failed — check the browser console and server logs.'); })\n"
+			. "      .always(function(){ \$btn.prop('disabled', false).text(label); });\n"
+			. "  });\n"
+			. "});";
+
+		wp_add_inline_script( 'jquery', $script );
+	}
+
+	/**
+	 * AJAX handler for the standalone admin page's own button — no MainWP involved.
+	 *
+	 * @return void
+	 */
+	public function ajax_run_backup() {
+		check_ajax_referer( self::NONCE_ACTION, 'security' );
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( array( 'message' => __( 'You do not have permission to do this.', 'mainwp-migratedb-backup-child' ) ) );
+		}
+
+		$result = $this->run_backup();
+
+		if ( empty( $result['success'] ) ) {
+			wp_send_json_error( $result );
+		}
+
+		wp_send_json_success( $result );
 	}
 
 	/**
 	 * Dispatch our own custom action out of MainWP Child's generic 'extra_execution' callable.
+	 * Only ever called if MainWP Child is installed and routes a request here — optional.
 	 *
 	 * @param array $information Response payload to hand back to the dashboard.
 	 * @param array $post        Raw POST data sent by the dashboard.
